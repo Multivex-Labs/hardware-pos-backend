@@ -1,4 +1,4 @@
-const Report = require('../models/Report')
+const Report = require('../models/report')
 
 const reportController = {
   // Summary ya leo
