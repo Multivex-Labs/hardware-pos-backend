@@ -67,44 +67,34 @@ const Client = {
       [id]
     )
     return rows
-  }
+  },
 
-  // Rekodi malipo ya client (inafanya mambo 2 kwa wakati mmoja)
+  // Rekodi malipo ya client
   async recordPayment({ client_id, amount, payment_method, reference, notes, recorded_by }) {
     const conn = await db.getConnection()
-    // ☝️ getConnection = chukua "njia moja" ya kuzungumza na DB
-    //    Tunahitaji hii kwa sababu tutafanya operations 2 kwa pamoja
 
     try {
       await conn.beginTransaction()
-      // ☝️ Sema DB: "Subiri niambie COMMIT kabla ya kuhifadhi kweli"
 
-      // Operation 1: Ingiza record ya payment kwenye table ya payments
       const [result] = await conn.execute(`
         INSERT INTO payments (client_id, amount, payment_method, reference, notes, recorded_by)
         VALUES (?, ?, ?, ?, ?, ?)
       `, [client_id, amount, payment_method || 'cash', reference || null, notes || null, recorded_by || null])
 
-      // Operation 2: Punguza balance ya client
       await conn.execute(`
         UPDATE clients
         SET balance = GREATEST(balance - ?, 0)
         WHERE id = ?
       `, [amount, client_id])
-      // ☝️ GREATEST(balance - amount, 0) = balance haiwezi kuwa chini ya 0
 
       await conn.commit()
-      // ☝️ Sasa hifadhi kweli. Kama Operation 1 au 2 imeshindwa, rollback inafuta yote
-
       return result.insertId
 
     } catch (err) {
       await conn.rollback()
-      // ☝️ Kuna tatizo — futa kila kitu kilichofanywa. Salama!
       throw err
     } finally {
       conn.release()
-      // ☝️ Daima rudisha connection. Hata kama kuna error
     }
   },
 
@@ -124,8 +114,6 @@ const Client = {
       WHERE p.client_id = ?
       ORDER BY p.created_at DESC
     `, [id])
-    // ☝️ LEFT JOIN users = tunapata jina la mtu aliyerekodi malipo
-
     return rows
   },
 
@@ -152,11 +140,10 @@ const Client = {
       WHERE c.id = ?
       GROUP BY c.id
     `, [id])
-
     return rows[0] || null
   },
 
-  // Weka au badilisha credit limit ya client
+  // Badilisha credit limit ya client
   async updateCreditLimit(id, credit_limit) {
     const [result] = await db.execute(
       'UPDATE clients SET credit_limit = ? WHERE id = ?',
@@ -166,4 +153,5 @@ const Client = {
   }
 
 }
+
 module.exports = Client
