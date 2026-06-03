@@ -24,4 +24,16 @@ router.put('/:id', auth, clientController.update)
 // Futa client — admin peke yake
 router.delete('/:id', auth, adminOnly, clientController.delete)
 
+// Pata profile kamili na stats za client
+router.get('/:id/profile', auth, clientController.getProfile)
+
+// Historia ya malipo
+router.get('/:id/payments', auth, clientController.getPaymentHistory)
+
+// Rekodi malipo mapya
+router.post('/:id/payments', auth, clientController.recordPayment)
+
+// Badilisha credit limit
+router.patch('/:id/credit-limit', auth, clientController.updateCreditLimit)
+
 module.exports = router
