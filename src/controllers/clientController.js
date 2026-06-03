@@ -39,10 +39,9 @@ const clientController = {
   },
 
   // Unda client mpya
-async create(req, res) {
+  async create(req, res) {
     try {
       const { name, phone, email, address, credit_limit } = req.body
-      // ☝️ ongeza credit_limit hapa
 
       if (!name) {
         return res.status(400).json({ message: 'Jina la client ni lazima' })
@@ -111,7 +110,7 @@ async create(req, res) {
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }
-  }
+  },
 
   // Rekodi malipo
   async recordPayment(req, res) {
@@ -119,20 +118,17 @@ async create(req, res) {
       const { amount, payment_method, reference, notes } = req.body
       const client_id = req.params.id
 
-      // Validation — hakikisha amount ipo na ni number
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         return res.status(400).json({ message: 'Weka kiasi sahihi cha malipo' })
       }
 
-      // Angalia client yupo
       const client = await Client.findById(client_id)
       if (!client) {
         return res.status(404).json({ message: 'Client haikupatikana' })
       }
 
-      // Angalia malipo hayazidi deni
       if (Number(amount) > Number(client.balance)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: `Malipo (${amount}) yanazidi deni la client (${client.balance})`
         })
       }
@@ -143,8 +139,7 @@ async create(req, res) {
         payment_method,
         reference,
         notes,
-        recorded_by: req.user?.id  // kutoka JWT middleware yako
-        // ☝️ req.user inatoka middleware/auth.js yako
+        recorded_by: req.user?.id
       })
 
       res.status(201).json({
