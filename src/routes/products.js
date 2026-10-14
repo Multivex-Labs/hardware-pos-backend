@@ -3,22 +3,23 @@ const router = express.Router()
 const productController = require('../controllers/productController')
 const { auth, adminOnly } = require('../middleware/auth')
 
-// Pata products zote — anyone aliyeingia
+// ⚠️ MUHIMU: routes zenye maneno maalum (units/all, lowstock, expiring-soon)
+// lazima ziwe KABLA ya '/:id' - vinginevyo Express itadhani ni product id.
+
+router.get('/units/all', auth, productController.getAllUnits)
+router.get('/lowstock', auth, productController.getLowStock)
+router.get('/expiring-soon', auth, productController.getExpiringSoon) // MPYA - Pharmacy
+
 router.get('/', auth, productController.getAll)
 
-// Pata low stock products
-router.get('/lowstock', auth, productController.getLowStock)
+router.get('/:id/units', auth, productController.getUnits)
+router.post('/:id/units', auth, adminOnly, productController.createUnit)
+router.put('/:id/units/:unitId', auth, adminOnly, productController.updateUnit)
+router.delete('/:id/units/:unitId', auth, adminOnly, productController.deleteUnit)
 
-// Pata product moja
 router.get('/:id', auth, productController.getOne)
-
-// Unda product mpya — admin peke yake
 router.post('/', auth, adminOnly, productController.create)
-
-// Edit product — admin peke yake
 router.put('/:id', auth, adminOnly, productController.update)
-
-// Futa product — admin peke yake
 router.delete('/:id', auth, adminOnly, productController.delete)
 
 module.exports = router

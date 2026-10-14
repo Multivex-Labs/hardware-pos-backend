@@ -30,6 +30,9 @@ router.get('/:id/profile', auth, clientController.getProfile)
 // Historia ya malipo
 router.get('/:id/payments', auth, clientController.getPaymentHistory)
 
+// Statement ya amana (deposit ledger)
+router.get('/:id/deposits', auth, clientController.getDepositHistory)
+
 // Rekodi malipo mapya
 router.post('/:id/payments', auth, clientController.recordPayment)
 

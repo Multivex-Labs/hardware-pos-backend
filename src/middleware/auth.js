@@ -24,4 +24,14 @@ const adminOnly = (req, res, next) => {
   next()
 }
 
-module.exports = { auth, adminOnly }
+// Generalized version - requireRole('admin', 'manager') inaruhusu roles nyingi.
+// Hii ni ulinzi wa server-side (sio UI-only) - hata request ikitumwa moja kwa moja
+// kupitia Postman/browser console, itakataliwa kama role ya mtumiaji haiendani.
+const requireRole = (...allowedRoles) => (req, res, next) => {
+  if (!req.user || !allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ message: 'You do not have permission to perform this action' })
+  }
+  next()
+}
+
+module.exports = { auth, adminOnly, requireRole }

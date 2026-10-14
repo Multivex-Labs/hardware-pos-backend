@@ -1,15 +1,22 @@
 const express = require('express')
 const router = express.Router()
 const authController = require('../controllers/authController')
-const { auth } = require('../middleware/auth')
+const { auth, adminOnly } = require('../middleware/auth')
 
-// Register
-router.post('/register', authController.register)
+// Register — sasa ni admin only, lazima ulogin kwanza kama admin
+// ndio uweze kuunda user mpya (cashier au admin)
+router.post('/register', auth, adminOnly, authController.register)
 
 // Login
 router.post('/login', authController.login)
 
 // Get current user (protected)
 router.get('/me', auth, authController.me)
+
+// Pata users wote — admin only
+router.get('/users', auth, adminOnly, authController.getAllUsers)
+
+// Futa user — admin only
+router.delete('/users/:id', auth, adminOnly, authController.deleteUser)
 
 module.exports = router

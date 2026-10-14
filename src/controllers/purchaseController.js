@@ -13,12 +13,13 @@ const purchaseController = {
 
       const total_cost = parseFloat(quantity) * parseFloat(cost_per_unit)
 
-      // Create purchase record
+      // Rekodi purchase
       const purchaseId = await Purchase.create(
         product_id, quantity, cost_per_unit, total_cost, supplier, notes, user_id
       )
 
-      // Update product stock
+      // Sasisha stock NA cost_price ya product
+      // (last-cost method: cost_price = bei ya ununuzi wa mwisho)
       const product = await Product.findById(product_id)
       const newStock = parseInt(product.stock) + parseInt(quantity)
       await Product.update(
@@ -26,6 +27,7 @@ const purchaseController = {
         product.name,
         product.description,
         product.price,
+        parseFloat(cost_per_unit),
         newStock,
         product.unit,
         product.low_stock_alert,

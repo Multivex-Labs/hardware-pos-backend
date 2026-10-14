@@ -2,39 +2,68 @@ const db = require('../config/database')
 
 const Product = {
   async findAll() {
-    const [rows] = await db.execute(
-      'SELECT * FROM products ORDER BY name ASC'
-    )
+    // is_active = 1 tu: bidhaa zilizofutwa (soft delete) hazionekani Inventory/Sales,
+    // lakini bado zipo kwa ajili ya historia (sale_items, reports, stock movements)
+    const [rows] = await db.execute('SELECT * FROM products WHERE is_active = 1 ORDER BY name ASC')
     return rows
   },
 
   async findById(id) {
-    const [rows] = await db.execute(
-      'SELECT * FROM products WHERE id = ?',
-      [id]
-    )
+    const [rows] = await db.execute('SELECT * FROM products WHERE id = ?', [id])
     return rows[0]
   },
 
-  async create(name, description, price, stock, unit, low_stock_alert, category) {
+  // NB: wholesale_price imeongezwa - kama haijawekwa (undefined/null), tunaiacha NULL
+  // (frontend inaweza kuiacha wazi kama product haina bei ya jumla)
+  //
+  // `pharmacy` (MPYA): object ya hiari yenye fields za pharmacy module - hardware
+  // clients hawaipitishi kabisa (inabaki default null/false zote) - hakuna athari
+  // kwa products za kawaida.
+  async create(name, description, price, cost_price, stock, unit, low_stock_alert, category, shelf, wholesale_price, pharmacy = {}) {
+    const {
+      expiry_date = null, batch_number = null, requires_prescription = false,
+      dosage = null, manufacturer = null, drug_category = null
+    } = pharmacy
+
     const [result] = await db.execute(
-      'INSERT INTO products (name, description, price, stock, unit, low_stock_alert, category) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, description, price, stock, unit || 'PC', low_stock_alert, category]
+      `INSERT INTO products
+        (name, description, price, wholesale_price, cost_price, stock, unit, low_stock_alert, category, shelf,
+         expiry_date, batch_number, requires_prescription, dosage, manufacturer, drug_category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name, description, price, wholesale_price || null, cost_price || 0, stock, unit || 'PC', low_stock_alert || 5, category, shelf || null,
+        expiry_date || null, batch_number || null, requires_prescription ? 1 : 0, dosage || null, manufacturer || null, drug_category || null
+      ]
     )
     return result.insertId
   },
 
-  async update(id, name, description, price, stock, unit, low_stock_alert, category) {
+  async update(id, name, description, price, cost_price, stock, unit, low_stock_alert, category, shelf, wholesale_price, pharmacy = {}) {
+    const {
+      expiry_date = null, batch_number = null, requires_prescription = false,
+      dosage = null, manufacturer = null, drug_category = null
+    } = pharmacy
+
     const [result] = await db.execute(
-      'UPDATE products SET name=?, description=?, price=?, stock=?, unit=?, low_stock_alert=?, category=? WHERE id=?',
-      [name, description, price, stock, unit, low_stock_alert, category, id]
+      `UPDATE products SET
+        name=?, description=?, price=?, wholesale_price=?, cost_price=?, stock=?, unit=?, low_stock_alert=?, category=?, shelf=?,
+        expiry_date=?, batch_number=?, requires_prescription=?, dosage=?, manufacturer=?, drug_category=?
+       WHERE id=?`,
+      [
+        name, description, price, wholesale_price || null, cost_price, stock, unit, low_stock_alert, category, shelf || null,
+        expiry_date || null, batch_number || null, requires_prescription ? 1 : 0, dosage || null, manufacturer || null, drug_category || null,
+        id
+      ]
     )
     return result.affectedRows
   },
 
-  async delete(id) {
+  // SOFT DELETE — hatufuti row. sale_items, stock_movements, PO/GRN na reports
+  // zote zinarejea product hii; hard DELETE ilikuwa inakataliwa na foreign key
+  // (au ingefuta stock_movements kwa CASCADE).
+  async softDelete(id) {
     const [result] = await db.execute(
-      'DELETE FROM products WHERE id = ?',
+      'UPDATE products SET is_active = 0, deleted_at = NOW() WHERE id = ? AND is_active = 1',
       [id]
     )
     return result.affectedRows
@@ -42,7 +71,21 @@ const Product = {
 
   async findLowStock() {
     const [rows] = await db.execute(
-      'SELECT * FROM products WHERE stock <= low_stock_alert ORDER BY stock ASC'
+      'SELECT * FROM products WHERE is_active = 1 AND stock <= low_stock_alert ORDER BY stock ASC'
+    )
+    return rows
+  },
+
+  // MPYA (Pharmacy): products zenye expiry_date ndani ya siku fulani (default 30),
+  // pamoja na zilizoshaisha muda wake (expiry_date < leo). Kwa Dashboard alert.
+  async findExpiringSoon(days = 30) {
+    const [rows] = await db.execute(
+      `SELECT * FROM products
+       WHERE is_active = 1
+         AND expiry_date IS NOT NULL
+         AND expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+       ORDER BY expiry_date ASC`,
+      [days]
     )
     return rows
   },

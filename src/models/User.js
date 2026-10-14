@@ -28,6 +28,31 @@ const User = {
       [id]
     )
     return rows[0]
+  },
+
+  // Pata users wote (bila password)
+  async findAll() {
+    const [rows] = await db.execute(
+      'SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC'
+    )
+    return rows
+  },
+
+  // Futa user
+  async delete(id) {
+    const [result] = await db.execute(
+      'DELETE FROM users WHERE id = ?',
+      [id]
+    )
+    return result.affectedRows > 0
+  },
+
+  // Hesabu jumla ya admins (kuzuia kufuta admin wa mwisho)
+  async countAdmins() {
+    const [rows] = await db.execute(
+      "SELECT COUNT(*) as count FROM users WHERE role = 'admin'"
+    )
+    return rows[0].count
   }
 }
 

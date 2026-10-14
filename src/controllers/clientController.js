@@ -1,4 +1,5 @@
 const Client = require('../models/client')
+const ClientDeposit = require('../models/clientDeposit')
 
 const clientController = {
   // Pata clients zote
@@ -161,6 +162,21 @@ const clientController = {
 
       const payments = await Client.getPaymentHistory(req.params.id)
       res.json({ client, payments })
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  // Statement ya amana ya client (deposit_in / deposit_used / void_restore / adjustment)
+  async getDepositHistory(req, res) {
+    try {
+      const client = await Client.findById(req.params.id)
+      if (!client) {
+        return res.status(404).json({ message: 'Client haikupatikana' })
+      }
+
+      const transactions = await ClientDeposit.findByClient(req.params.id)
+      res.json({ client, transactions })
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }

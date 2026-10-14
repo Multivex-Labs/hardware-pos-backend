@@ -112,15 +112,19 @@ const Client = {
       FROM payments p
       LEFT JOIN users u ON u.id = p.recorded_by
       WHERE p.client_id = ?
+        AND (p.notes IS NULL OR p.notes <> '[LEGACY-DEPOSIT]')
       ORDER BY p.created_at DESC
     `, [id])
     return rows
   },
 
   // Pata client na stats zake zote (kwa profile page)
+  // NB: stats zinahesabiwa kwa subqueries (sio JOIN mbili kwa pamoja) — JOIN ya sales
+  // na payments kwa wakati mmoja ilikuwa inazidisha SUM(total) na SUM(amount).
+  // Sales zilizo-voidiwa hazihesabiwi. Amana (deposit) haihesabiwi kama "total_paid".
   async findByIdWithStats(id) {
     const [rows] = await db.execute(`
-      SELECT 
+      SELECT
         c.id,
         c.name,
         c.phone,
@@ -128,17 +132,16 @@ const Client = {
         c.address,
         c.credit_limit,
         c.balance,
+        c.deposit,
         c.status,
         c.created_at,
-        (c.credit_limit - c.balance)   AS available_credit,
-        COUNT(DISTINCT s.id)            AS total_sales,
-        COALESCE(SUM(s.total), 0)       AS total_purchased,
-        COALESCE(SUM(p.amount), 0)      AS total_paid
+        (c.credit_limit - c.balance) AS available_credit,
+        (SELECT COUNT(*) FROM sales s WHERE s.client_id = c.id AND s.voided = 0) AS total_sales,
+        (SELECT COALESCE(SUM(s.total), 0) FROM sales s WHERE s.client_id = c.id AND s.voided = 0) AS total_purchased,
+        (SELECT COALESCE(SUM(p.amount), 0) FROM payments p
+           WHERE p.client_id = c.id AND (p.notes IS NULL OR p.notes <> '[LEGACY-DEPOSIT]')) AS total_paid
       FROM clients c
-      LEFT JOIN sales s    ON s.client_id = c.id
-      LEFT JOIN payments p ON p.client_id = c.id
       WHERE c.id = ?
-      GROUP BY c.id
     `, [id])
     return rows[0] || null
   },
