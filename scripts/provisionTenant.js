@@ -1,7 +1,7 @@
 // Duka JIPYA:
 //   node scripts/provisionTenant.js new demo "Demo Shop" starter admin@demo.co.tz "Pass12345"
-// Duka lenye database iliyopo tayari (mfano hardware_pos ya Pius):
-//   node scripts/provisionTenant.js existing piushardware "Pius Hardware" hardware_pos business
+// Duka lenye database iliyopo tayari (mfano hardware_pos ya majaribio):
+//   node scripts/provisionTenant.js existing demo "Demo Shop" hardware_pos business
 require('dotenv').config()
 const { provisionTenant, registerExistingTenant } = require('../src/services/tenantProvisioner')
 

@@ -101,7 +101,7 @@ async function provisionTenant(opts) {
   }
 }
 
-// Duka lenye database iliyopo tayari (mfano Pius: hardware_pos) - register tu, usiunde DB mpya.
+// Duka lenye database iliyopo tayari (mfano: hardware_pos ya majaribio) - register tu, usiunde DB mpya.
 async function registerExistingTenant({
   slug,
   businessName,
