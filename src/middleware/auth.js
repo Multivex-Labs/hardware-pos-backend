@@ -1,6 +1,7 @@
-const jwt = require('jsonwebtoken')
-require('dotenv').config()
+const { verifyToken } = require('../utils/tenantJwt')
 
+// req.tenant inawekwa na tenant middleware (mode ya multi-tenant).
+// Bila multi-tenant, req.tenant haipo na JWT_SECRET ya .env inatumika kama zamani.
 const auth = (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '')
@@ -9,7 +10,7 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: 'Hakuna token — ingia kwanza' })
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    const decoded = verifyToken(token, req.tenant || null)
     req.user = decoded
     next()
   } catch (error) {

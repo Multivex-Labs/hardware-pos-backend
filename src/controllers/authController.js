@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
 const User = require('../models/User')
+const { signToken } = require('../utils/tenantJwt')
 require('dotenv').config()
 
 // Roles zinazokubalika kwenye system.
@@ -48,11 +48,8 @@ const authController = {
         return res.status(400).json({ message: 'Email au password si sahihi' })
       }
 
-      const token = jwt.sign(
-        { id: user.id, role: user.role },
-        process.env.JWT_SECRET,
-        { expiresIn: '8h' }
-      )
+      // Secret ya duka hili (multi-tenant) au JWT_SECRET ya .env (mode ya zamani)
+      const token = signToken({ id: user.id, role: user.role }, req.tenant || null, '8h')
 
       res.json({
         message: 'Umeingia successfully',
