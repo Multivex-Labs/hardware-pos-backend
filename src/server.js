@@ -24,6 +24,17 @@ app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+// ===== MULTI-TENANT (inawaka tu kama MULTI_TENANT=true kwenye .env) =====
+// Bila flag, server inafanya kazi kama zamani (database moja).
+if (process.env.MULTI_TENANT === 'true') {
+  const platformRoutes = require('./routes/platform')
+  const { tenantMiddleware } = require('./middleware/tenant')
+
+  app.use('/api/platform', platformRoutes) // admin panel ya Multivex (haina tenant)
+  app.use('/api', tenantMiddleware) // kila route ya POS hapa chini inahitaji tenant
+  console.log('Multi-tenant mode: ON')
+}
+
 app.use('/api/auth', authRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/clients', clientRoutes)
