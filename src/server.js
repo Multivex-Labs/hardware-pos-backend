@@ -19,6 +19,7 @@ const stockConversionRoutes = require('./routes/stockConversions')
 const dispensingLogRoutes = require('./routes/dispensingLog') // MPYA - Pharmacy
 
 const app = express()
+const { permissionGate } = require('./middleware/auth')
 
 app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }))
 app.use(express.json({ limit: '10mb' }))
@@ -35,6 +36,7 @@ if (process.env.MULTI_TENANT === 'true') {
   console.log('Multi-tenant mode: ON')
 }
 
+app.use('/api', permissionGate)
 app.use('/api/auth', authRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/clients', clientRoutes)

@@ -15,8 +15,13 @@ router.get('/me', auth, authController.me)
 
 // Pata users wote — admin only
 router.get('/users', auth, adminOnly, authController.getAllUsers)
+router.put('/users/:id/role', auth, adminOnly, authController.updateUserRole)
 
 // Futa user — admin only
 router.delete('/users/:id', auth, adminOnly, authController.deleteUser)
+router.get('/roles', auth, adminOnly, authController.getRoles)
+router.post('/roles', auth, adminOnly, authController.createRole)
+router.put('/roles/:name', auth, adminOnly, authController.updateRole)
+router.delete('/roles/:name', auth, adminOnly, authController.removeRole)
 
 module.exports = router

@@ -66,6 +66,19 @@ async function provisionTenant(opts) {
     const tdb = await connect(dbName)
     try {
       await tdb.query(fs.readFileSync(TEMPLATE, 'utf8'))
+      const [permissionColumns] = await tdb.execute("SHOW COLUMNS FROM users LIKE 'permissions'")
+      if (!permissionColumns.length) {
+        await tdb.query('ALTER TABLE users ADD COLUMN permissions LONGTEXT NULL AFTER role')
+      }
+      await tdb.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(100) NOT NULL DEFAULT 'cashier'")
+      await tdb.query(`CREATE TABLE IF NOT EXISTS user_roles (
+        id INT NOT NULL AUTO_INCREMENT,
+        name VARCHAR(40) NOT NULL,
+        permissions LONGTEXT NOT NULL,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY user_roles_name_unique (name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
       const hash = await bcrypt.hash(adminPassword, 10)
       await tdb.execute('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)', [
         adminName || 'Admin',

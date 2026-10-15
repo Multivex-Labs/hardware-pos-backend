@@ -1,10 +1,8 @@
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
 const { signToken } = require('../utils/tenantJwt')
+const { isValidPermissions, validateRoleName } = require('../utils/permissions')
 require('dotenv').config()
-
-// Roles zinazokubalika kwenye system.
-const ALLOWED_ROLES = ['admin', 'manager', 'cashier']
 
 const authController = {
   // Register user mpya — ADMIN ONLY (route imelindwa pia)
@@ -16,7 +14,10 @@ const authController = {
         return res.status(400).json({ message: 'Jaza jina, email na password' })
       }
 
-      const safeRole = role && ALLOWED_ROLES.includes(role) ? role : 'cashier'
+      const safeRole = role || 'cashier'
+      if (typeof safeRole !== 'string' || safeRole === 'admin' || !(await User.roleExists(safeRole))) {
+        return res.status(400).json({ message: 'Role haipo au haiwezi kupewa user mpya' })
+      }
 
       const existingUser = await User.findByEmail(email)
       if (existingUser) {
@@ -58,7 +59,8 @@ const authController = {
           id: user.id,
           name: user.name,
           email: user.email,
-          role: user.role
+          role: user.role,
+          permissions: user.permissions
         }
       })
     } catch (error) {
@@ -79,6 +81,89 @@ const authController = {
     try {
       const users = await User.findAll()
       res.json(users)
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async getRoles(req, res) {
+    try {
+      res.json(await User.findRoles())
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async createRole(req, res) {
+    try {
+      const name = validateRoleName(req.body.name)
+      if (!name) return res.status(400).json({ message: 'Role name must be 2–40 characters and not a reserved role' })
+      if (!isValidPermissions(req.body.permissions)) {
+        return res.status(400).json({ message: 'Permissions ulizotuma si sahihi' })
+      }
+      if (await User.roleExists(name)) {
+        return res.status(409).json({ message: 'Role name tayari inatumika' })
+      }
+
+      await User.createRole(name, req.body.permissions)
+      res.status(201).json({ message: 'Role imeundwa', name })
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async updateRole(req, res) {
+    try {
+      const role = await User.findRole(req.params.name)
+      if (!role) return res.status(404).json({ message: 'Role haikupatikana' })
+      if (role.name === 'admin') {
+        return res.status(400).json({ message: 'Admin role ina full access na haiwezi kubadilishwa' })
+      }
+      if (!isValidPermissions(req.body.permissions)) {
+        return res.status(400).json({ message: 'Permissions ulizotuma si sahihi' })
+      }
+
+      await User.updateRole(role.name, req.body.permissions)
+      res.json({ message: 'Permissions za role zimehifadhiwa' })
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async removeRole(req, res) {
+    try {
+      const role = await User.findRole(req.params.name)
+      if (!role) return res.status(404).json({ message: 'Role haikupatikana' })
+      if (role.system) {
+        return res.status(400).json({ message: 'Built-in role haiwezi kufutwa' })
+      }
+      const removed = await User.deleteRole(role.name)
+      if (!removed) {
+        return res.status(409).json({ message: 'Ondoa role hii kwa users wote kwanza' })
+      }
+      res.json({ message: 'Role imefutwa' })
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async updateUserRole(req, res) {
+    try {
+      const { id } = req.params
+      const { role } = req.body
+      if (Number(id) === req.user.id) {
+        return res.status(400).json({ message: 'Huwezi kubadilisha role ya akaunti yako mwenyewe' })
+      }
+      if (!role || role === 'admin' || !(await User.roleExists(role))) {
+        return res.status(400).json({ message: 'Role haipo au haiwezi kupewa user' })
+      }
+      const targetUser = await User.findById(id)
+      if (!targetUser) return res.status(404).json({ message: 'User haikupatikana' })
+      if (targetUser.role === 'admin') {
+        return res.status(400).json({ message: 'Admin account haiwezi kupewa role nyingine' })
+      }
+      await User.updateRoleForUser(id, role)
+      res.json({ message: 'Role ya user imebadilishwa' })
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }
