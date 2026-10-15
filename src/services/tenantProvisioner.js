@@ -23,6 +23,16 @@ function connect(database) {
 
 const newSecret = () => crypto.randomBytes(48).toString('hex')
 
+// Inaendesha hatua moja na kutaja jina lake kama ikishindwa (rahisi ku-debug)
+async function step(name, fn) {
+  try {
+    return await fn()
+  } catch (err) {
+    err.message = `[${name}] ${err.message}`
+    throw err
+  }
+}
+
 // Duka JIPYA: inatengeneza database mpya, schema, admin wa duka, na kuliandikisha kwenye master.
 async function provisionTenant(opts) {
   const {
@@ -46,7 +56,7 @@ async function provisionTenant(opts) {
     throw new Error('Admin email na password (angalau herufi 8) zinahitajika')
   }
   if (!fs.existsSync(TEMPLATE)) {
-    throw new Error('sql/tenant_template.sql haipo. Itengenezwe kwanza kwa mysqldump --no-data.')
+    throw new Error('sql/tenant_template.sql haipo. Itengenezwe kwanza: node scripts/generateTemplate.js')
   }
 
   const [exists] = await master.execute('SELECT id FROM tenants WHERE slug = ?', [slug])
@@ -58,43 +68,58 @@ async function provisionTenant(opts) {
   const root = await connect(undefined)
   let created = false
   try {
-    await root.query(
-      `CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    await step('create database', () =>
+      root.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`)
     )
     created = true
 
     const tdb = await connect(dbName)
     try {
-      await tdb.query(fs.readFileSync(TEMPLATE, 'utf8'))
-      const [permissionColumns] = await tdb.execute("SHOW COLUMNS FROM users LIKE 'permissions'")
-      if (!permissionColumns.length) {
-        await tdb.query('ALTER TABLE users ADD COLUMN permissions LONGTEXT NULL AFTER role')
-      }
-      await tdb.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(100) NOT NULL DEFAULT 'cashier'")
-      await tdb.query(`CREATE TABLE IF NOT EXISTS user_roles (
-        id INT NOT NULL AUTO_INCREMENT,
-        name VARCHAR(40) NOT NULL,
-        permissions LONGTEXT NOT NULL,
-        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        UNIQUE KEY user_roles_name_unique (name)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+      await step('apply template', () => tdb.query(fs.readFileSync(TEMPLATE, 'utf8')))
+
+      await step('permissions column', async () => {
+        const [permissionColumns] = await tdb.execute("SHOW COLUMNS FROM users LIKE 'permissions'")
+        if (!permissionColumns.length) {
+          await tdb.query('ALTER TABLE users ADD COLUMN permissions LONGTEXT NULL AFTER role')
+        }
+      })
+      await step('role column', () =>
+        tdb.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(100) NOT NULL DEFAULT 'cashier'")
+      )
+      await step('user_roles table', () =>
+        tdb.query(`CREATE TABLE IF NOT EXISTS user_roles (
+          id INT NOT NULL AUTO_INCREMENT,
+          name VARCHAR(40) NOT NULL,
+          permissions LONGTEXT NOT NULL,
+          created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          UNIQUE KEY user_roles_name_unique (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+      )
+
       const hash = await bcrypt.hash(adminPassword, 10)
-      await tdb.execute('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)', [
-        adminName || 'Admin',
-        adminEmail,
-        hash,
-        'admin'
-      ])
-      await tdb.execute('INSERT INTO business_settings (business_name) VALUES (?)', [businessName])
+      await step('insert admin user', () =>
+        tdb.execute('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)', [
+          adminName || 'Admin',
+          adminEmail,
+          hash,
+          'admin'
+        ])
+      )
+      // business_settings ni table ya row moja (id = 1), kwa hiyo id inatolewa wazi
+      await step('insert business_settings', () =>
+        tdb.execute('INSERT INTO business_settings (id, business_name) VALUES (1, ?)', [businessName])
+      )
     } finally {
       await tdb.end()
     }
 
-    const [r] = await master.execute(
-      `INSERT INTO tenants (slug, business_name, db_name, plan, business_type, status, jwt_secret, subscription_end)
-       VALUES (?, ?, ?, ?, ?, 'trial', ?, ?)`,
-      [slug, businessName, dbName, plan, businessType, newSecret(), subscriptionEnd]
+    const [r] = await step('register in master (tenants)', () =>
+      master.execute(
+        `INSERT INTO tenants (slug, business_name, db_name, plan, business_type, status, jwt_secret, subscription_end)
+         VALUES (?, ?, ?, ?, ?, 'trial', ?, ?)`,
+        [slug, businessName, dbName, plan, businessType, newSecret(), subscriptionEnd]
+      )
     )
 
     return {
