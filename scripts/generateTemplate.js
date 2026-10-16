@@ -34,10 +34,14 @@ async function main() {
   }
   out += 'SET FOREIGN_KEY_CHECKS=1;\n'
 
+  // Keep Pharmacy batch tables in every tenant template, even if SOURCE_DB has not run migration 008.
+  const pharmacyMigration = path.join(__dirname, '../src/migrations/008_pharmacy_batches.sql')
+  if (fs.existsSync(pharmacyMigration)) out += `\n-- Pharmacy batch schema from migration 008\n${fs.readFileSync(pharmacyMigration, 'utf8')}\n`
+
   fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true })
   fs.writeFileSync(OUT_FILE, out, 'utf8')
 
-  // Thibitisho ya migrations 005 na 006
+  // Thibitisho ya migrations 005, 006, na 008
   const [perm] = await db.query("SHOW COLUMNS FROM users LIKE 'permissions'")
   console.log(`\nTables ${tables.length}: ${tables.join(', ')}`)
   console.log(`005 (users.permissions): ${perm.length ? 'IPO ✅' : 'HAIPO ❌ (provisioner itaiongeza yenyewe)'}`)

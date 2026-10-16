@@ -90,6 +90,19 @@ const GRN = {
     try {
       await conn.beginTransaction()
 
+      const [businessRows] = await conn.execute('SELECT business_type FROM business_settings WHERE id=1')
+      const isPharmacy = businessRows[0]?.business_type === 'pharmacy'
+      if (isPharmacy && items.some(item => item.product_id && (!String(item.batch_number || '').trim() || !item.expiry_date))) {
+        throw new Error('Pharmacy stock receipts require a batch number and expiry date for every stocked product')
+      }
+      if (isPharmacy) {
+        for (const item of items.filter(row => row.product_id)) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.expiry_date))) throw new Error(`Invalid expiry date for ${item.product_name || 'medicine'}`)
+          const [expiryRows] = await conn.execute('SELECT ? < CURDATE() AS expired', [item.expiry_date])
+          if (expiryRows[0].expired) throw new Error(`Expired stock cannot be received as active batch ${item.batch_number}`)
+        }
+      }
+
       const grn_number = await GRN.generateGRNNumber()
 
       // Kama GRN hii inahusiana na PO na hakuna vendor_id iliyotumwa moja
@@ -156,6 +169,29 @@ const GRN = {
             reason: null,
             performed_by: received_by
           }, conn)
+
+          if (isPharmacy) {
+            const [batchRows] = await conn.execute('SELECT * FROM inventory_batches WHERE product_id=? AND batch_number=? FOR UPDATE', [item.product_id, String(item.batch_number).trim()])
+            let batchId, before, after
+            if (batchRows.length) {
+              const batch = batchRows[0]
+              if (String(batch.expiry_date).slice(0, 10) !== String(item.expiry_date).slice(0, 10)) throw new Error(`Expiry date mismatch for batch ${item.batch_number}`)
+              if (batch.status === 'recalled' || batch.status === 'quarantined') throw new Error(`Batch ${item.batch_number} is blocked`)
+              batchId = batch.id; before = Number(batch.quantity_on_hand); after = before + incomingQty
+              await conn.execute(`UPDATE inventory_batches SET quantity_received=quantity_received+?,quantity_on_hand=?,status='active',supplier_id=COALESCE(?,supplier_id),grn_id=?,received_date=? WHERE id=?`,
+                [incomingQty, after, resolvedVendorId, grn_id, received_date, batchId])
+            } else {
+              before = 0; after = incomingQty
+              const [batchResult] = await conn.execute(`INSERT INTO inventory_batches
+                (product_id,batch_number,supplier_id,grn_id,received_date,manufacture_date,expiry_date,quantity_received,quantity_on_hand,unit_cost,status,created_by)
+                VALUES (?,?,?,?,?,?,?,?,?,?,'active',?)`, [item.product_id, String(item.batch_number).trim(), resolvedVendorId, grn_id, received_date,
+                item.manufacture_date || null, item.expiry_date, incomingQty, incomingQty, incomingCost, received_by])
+              batchId = batchResult.insertId
+            }
+            await conn.execute(`INSERT INTO batch_stock_movements
+              (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+              VALUES (?,?,'purchase',?,?,?,'grn',?,NULL,?)`, [batchId, item.product_id, incomingQty, before, after, grn_id, received_by])
+          }
 
           await conn.execute(
             'UPDATE po_items SET quantity_received = quantity_received + ? WHERE po_id = ? AND product_id = ?',

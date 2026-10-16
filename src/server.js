@@ -17,6 +17,7 @@ const procurementRoutes = require('./routes/procurement')
 const stockMovementRoutes = require('./routes/stockMovements')
 const stockConversionRoutes = require('./routes/stockConversions')
 const dispensingLogRoutes = require('./routes/dispensingLog') // MPYA - Pharmacy
+const pharmacyRoutes = require('./routes/pharmacy')
 
 const app = express()
 const { permissionGate } = require('./middleware/auth')
@@ -52,6 +53,7 @@ app.use('/api/procurement', procurementRoutes)
 app.use('/api/stock-movements', stockMovementRoutes)
 app.use('/api/stock-conversions', stockConversionRoutes)
 app.use('/api/dispensing-log', dispensingLogRoutes) // MPYA - Pharmacy
+app.use('/api/pharmacy', pharmacyRoutes)
 
 app.get('/', (req, res) => res.json({ message: 'Hardware POS API is running!', status: 'ok' }))
 

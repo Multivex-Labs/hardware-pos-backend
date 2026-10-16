@@ -186,8 +186,9 @@ const saleController = {
   // CASH sale (cash / mobile_money / bank_transfer) — atomic
   async create(req, res) {
     try {
-      const { client_id, walkin_name, items, discount, payment_method, amount_received } = req.body
+      const { client_id, walkin_name, items, discount, payment_method, amount_received, request_key } = req.body
       const user_id = req.user.id
+      if (request_key !== undefined && (typeof request_key !== 'string' || request_key.length < 8 || request_key.length > 100)) return res.status(400).json({ message: 'Invalid request key' })
 
       if (!items || items.length === 0) {
         return res.status(400).json({ message: 'Ongeza bidhaa angalau moja' })
@@ -212,7 +213,7 @@ const saleController = {
         changeGiven = amountReceivedValue - finalTotal
       }
 
-      const { saleId } = await Sale.createAtomic({
+      const { saleId, duplicate } = await Sale.createAtomic({
         mode: 'cash',
         client_id: client_id || null,
         user_id,
@@ -222,10 +223,11 @@ const saleController = {
         walkin_name: walkin_name || null,
         amount_received: amountReceivedValue,
         change_given: changeGiven,
-        items: prepared.items
+        items: prepared.items,
+        request_key
       })
 
-      res.status(201).json({ message: 'Sale imefanyika!', saleId, total: finalTotal, amount_received: amountReceivedValue, change: changeGiven })
+      res.status(201).json({ message: duplicate ? 'Sale request already processed' : 'Sale imefanyika!', saleId, total: finalTotal, amount_received: amountReceivedValue, change: changeGiven, duplicate: Boolean(duplicate) })
     } catch (error) {
       sendError(res, error)
     }
@@ -234,28 +236,31 @@ const saleController = {
   // CREDIT sale (mkopo) — atomic, credit check ndani ya transaction (client row imefungwa)
   async createCreditSale(req, res) {
     try {
-      const { client_id, items, discount } = req.body
+      const { client_id, items, discount, request_key } = req.body
       const user_id = req.user.id
+      if (request_key !== undefined && (typeof request_key !== 'string' || request_key.length < 8 || request_key.length > 100)) return res.status(400).json({ message: 'Invalid request key' })
 
       if (!client_id) return res.status(400).json({ message: 'Chagua client kwa credit sale' })
       if (!items || items.length === 0) return res.status(400).json({ message: 'Ongeza bidhaa angalau moja' })
 
       const prepared = await prepareItems(items, discount)
 
-      const { saleId, new_balance } = await Sale.createAtomic({
+      const { saleId, new_balance, duplicate } = await Sale.createAtomic({
         mode: 'credit',
         client_id,
         user_id,
         total: prepared.finalTotal,
         discount: prepared.discount,
-        items: prepared.items
+        items: prepared.items,
+        request_key
       })
 
       res.status(201).json({
-        message: `Credit sale imefanyika! Deni jipya: TZS ${new_balance.toLocaleString()}`,
+        message: duplicate ? 'Sale request already processed' : `Credit sale imefanyika! Deni jipya: TZS ${Number(new_balance || 0).toLocaleString()}`,
         saleId,
         total: prepared.finalTotal,
-        new_balance
+        new_balance,
+        duplicate: Boolean(duplicate)
       })
     } catch (error) {
       sendError(res, error)
@@ -265,28 +270,31 @@ const saleController = {
   // DEPOSIT sale (kulipia kwa amana) — atomic + ledger row (deposit_used)
   async createDepositSale(req, res) {
     try {
-      const { client_id, items, discount } = req.body
+      const { client_id, items, discount, request_key } = req.body
       const user_id = req.user.id
+      if (request_key !== undefined && (typeof request_key !== 'string' || request_key.length < 8 || request_key.length > 100)) return res.status(400).json({ message: 'Invalid request key' })
 
       if (!client_id) return res.status(400).json({ message: 'Chagua client kwa deposit sale' })
       if (!items || items.length === 0) return res.status(400).json({ message: 'Ongeza bidhaa angalau moja' })
 
       const prepared = await prepareItems(items, discount)
 
-      const { saleId, remaining_deposit } = await Sale.createAtomic({
+      const { saleId, remaining_deposit, duplicate } = await Sale.createAtomic({
         mode: 'deposit',
         client_id,
         user_id,
         total: prepared.finalTotal,
         discount: prepared.discount,
-        items: prepared.items
+        items: prepared.items,
+        request_key
       })
 
       res.status(201).json({
-        message: `Deposit sale imefanyika! Amana iliyobaki: TZS ${remaining_deposit.toLocaleString()}`,
+        message: duplicate ? 'Sale request already processed' : `Deposit sale imefanyika! Amana iliyobaki: TZS ${Number(remaining_deposit || 0).toLocaleString()}`,
         saleId,
         total: prepared.finalTotal,
-        remaining_deposit
+        remaining_deposit,
+        duplicate: Boolean(duplicate)
       })
     } catch (error) {
       sendError(res, error)

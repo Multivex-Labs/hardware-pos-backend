@@ -22,8 +22,37 @@ const Product = {
   async create(name, description, price, cost_price, stock, unit, low_stock_alert, category, shelf, wholesale_price, pharmacy = {}) {
     const {
       expiry_date = null, batch_number = null, requires_prescription = false,
-      dosage = null, manufacturer = null, drug_category = null
+      dosage = null, manufacturer = null, drug_category = null, isPharmacy = false, created_by = null
     } = pharmacy
+
+    if (isPharmacy && Number(stock || 0) > 0 && (!String(batch_number || '').trim() || !expiry_date)) {
+      throw new Error('Opening pharmacy stock requires a batch number and expiry date. Receive stock through Procurement or enter both batch fields.')
+    }
+
+    if (isPharmacy && Number(stock || 0) > 0) {
+      const conn = await db.getConnection()
+      try {
+        await conn.beginTransaction()
+        const [[expiry]] = await conn.execute('SELECT ? < CURDATE() AS expired', [expiry_date])
+        if (expiry.expired) throw new Error('Expired medicine stock cannot be added as active inventory')
+        const [result] = await conn.execute(
+          `INSERT INTO products (name,description,price,wholesale_price,cost_price,stock,unit,low_stock_alert,category,shelf,
+           expiry_date,batch_number,requires_prescription,dosage,manufacturer,drug_category)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [name, description, price, wholesale_price || null, cost_price || 0, stock, unit || 'PC', low_stock_alert || 5, category, shelf || null,
+            expiry_date, String(batch_number).trim(), requires_prescription ? 1 : 0, dosage || null, manufacturer || null, drug_category || null]
+        )
+        const [batchResult] = await conn.execute(`INSERT INTO inventory_batches
+          (product_id,batch_number,received_date,expiry_date,quantity_received,quantity_on_hand,unit_cost,status,created_by)
+          VALUES (?,?,CURDATE(),?,?,?,?, 'active',?)`, [result.insertId, String(batch_number).trim(), expiry_date, stock, stock, cost_price || 0, created_by])
+        await conn.execute(`INSERT INTO batch_stock_movements (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+          VALUES (?,?,'opening',?,0,?,'opening_batch',?,'Initial stock entered with medicine',?)`, [batchResult.insertId, result.insertId, stock, stock, batchResult.insertId, created_by])
+        await conn.execute(`INSERT INTO stock_movements (product_id,movement_type,quantity_change,stock_before,stock_after,reference_type,reference_id,reason,performed_by)
+          VALUES (?,'purchase',?,0,?,'opening_batch',?,'Initial pharmacy stock entered with medicine',?)`, [result.insertId, stock, stock, batchResult.insertId, created_by])
+        await conn.commit()
+        return result.insertId
+      } catch (error) { await conn.rollback(); throw error } finally { conn.release() }
+    }
 
     const [result] = await db.execute(
       `INSERT INTO products

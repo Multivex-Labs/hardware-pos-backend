@@ -1,4 +1,6 @@
 const StockMovement = require('../models/stockMovement')
+const Pharmacy = require('../models/pharmacy')
+const BusinessSettings = require('../models/businessSettings')
 
 const stockMovementController = {
   // GET /api/stock-movements?product_id=&movement_type=&date_from=&date_to=&page=&limit=
@@ -42,6 +44,13 @@ const stockMovementController = {
       // Aina nyingine (sale, purchase, n.k.) zinatoka moja kwa moja kwenye flow zake.
       const allowed = ['adjustment', 'damage']
       const type = allowed.includes(movement_type) ? movement_type : 'adjustment'
+
+      const settings = await BusinessSettings.get()
+      if (settings?.business_type === 'pharmacy') {
+        if (!req.body.batch_id) return res.status(400).json({ message: 'Pharmacy adjustments must identify a batch' })
+        await Pharmacy.adjustBatch({ batch_id: req.body.batch_id, quantity_change: Number(quantity_change), reason, user_id: performed_by, movement_type: type })
+        return res.status(201).json({ message: 'Batch adjustment imefanikiwa' })
+      }
 
       const movement = await StockMovement.log({
         product_id,

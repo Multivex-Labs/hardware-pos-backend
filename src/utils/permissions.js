@@ -7,6 +7,7 @@ const DEFAULT_PERMISSIONS = {
     sales: ACTIONS,
     inventory: ACTIONS,
     dispensing: ACTIONS,
+    expiry: ['view'],
     procurement: ACTIONS,
     purchases: ACTIONS,
     expenses: ACTIONS,
@@ -18,6 +19,7 @@ const DEFAULT_PERMISSIONS = {
     sales: ['view', 'create', 'edit'],
     inventory: ['view', 'edit'],
     dispensing: ['view', 'create'],
+    expiry: ['view'],
     procurement: ['view'],
     purchases: ['view'],
     expenses: ['view'],
@@ -28,7 +30,8 @@ const DEFAULT_PERMISSIONS = {
     dashboard: ['view'],
     sales: ['view', 'create'],
     inventory: ['view'],
-    dispensing: ['view', 'create']
+    dispensing: ['view', 'create'],
+    expiry: ['view']
   }
 }
 

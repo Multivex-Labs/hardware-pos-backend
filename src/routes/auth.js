@@ -12,10 +12,12 @@ router.post('/login', authController.login)
 
 // Get current user (protected)
 router.get('/me', auth, authController.me)
+router.put('/password', auth, authController.changePassword)
 
 // Pata users wote — admin only
 router.get('/users', auth, adminOnly, authController.getAllUsers)
 router.put('/users/:id/role', auth, adminOnly, authController.updateUserRole)
+router.put('/users/:id/password', auth, adminOnly, authController.resetUserPassword)
 
 // Futa user — admin only
 router.delete('/users/:id', auth, adminOnly, authController.deleteUser)

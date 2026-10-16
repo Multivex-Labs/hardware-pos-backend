@@ -25,7 +25,7 @@ const User = {
   async create(name, email, password, role = 'cashier') {
     const hashedPassword = await bcrypt.hash(password, 10)
     const [result] = await db.execute(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+      'INSERT INTO users (name, email, password, role, must_change_password) VALUES (?, ?, ?, ?, 1)',
       [name, email, hashedPassword, role]
     )
     return result.insertId
@@ -34,11 +34,32 @@ const User = {
   // Pata user kwa id
   async findById(id) {
     const [rows] = await db.execute(
-      'SELECT id, name, email, role, permissions, created_at FROM users WHERE id = ?',
+      'SELECT id, name, email, role, permissions, must_change_password, created_at FROM users WHERE id = ?',
       [id]
     )
     if (!rows[0]) return undefined
     return { ...rows[0], permissions: await permissionsFor(rows[0].role, rows[0].permissions) }
+  },
+
+  async findPasswordById(id) {
+    const [rows] = await db.execute('SELECT password FROM users WHERE id = ? LIMIT 1', [id])
+    return rows[0]?.password
+  },
+
+  async updatePassword(id, passwordHash, mustChangePassword = false) {
+    const [result] = await db.execute(
+      'UPDATE users SET password = ?, must_change_password = ? WHERE id = ?',
+      [passwordHash, mustChangePassword ? 1 : 0, id]
+    )
+    return result.affectedRows > 0
+  },
+
+  async setMustChangePassword(id) {
+    const [result] = await db.execute(
+      'UPDATE users SET must_change_password = 1 WHERE id = ?',
+      [id]
+    )
+    return result.affectedRows > 0
   },
 
   // Pata users wote (bila password)

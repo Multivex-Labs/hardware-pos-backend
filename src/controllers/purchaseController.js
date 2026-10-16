@@ -1,9 +1,12 @@
 const Purchase = require('../models/purchase')
 const Product = require('../models/product')
+const BusinessSettings = require('../models/businessSettings')
 
 const purchaseController = {
   async create(req, res) {
     try {
+      const settings = await BusinessSettings.get()
+      if (settings?.business_type === 'pharmacy') return res.status(400).json({ message: 'Use Procurement GRN to receive pharmacy stock with its batch and expiry information' })
       const { product_id, quantity, cost_per_unit, supplier, notes } = req.body
       const user_id = req.user.id
 

@@ -9,8 +9,7 @@ const BusinessSettings = {
   async update(fields) {
     const allowed = [
       'business_name', 'logo', 'address', 'phone', 'motto',
-      'tin_number', 'bank_name', 'bank_account', 'bank_branch',
-      'business_type' // MPYA - Pharmacy: 'hardware' | 'pharmacy' | 'general'
+      'tin_number', 'bank_name', 'bank_account', 'bank_branch'
     ]
     const sets = allowed.map(f => `${f}=?`).join(', ')
     const values = allowed.map(f => fields[f] !== undefined ? fields[f] : null)

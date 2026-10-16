@@ -1,9 +1,9 @@
 const express = require('express')
 const router = express.Router()
 const dispensingLogController = require('../controllers/dispensingLogController')
-const { auth } = require('../middleware/auth')
+const { auth, pharmacyOnly } = require('../middleware/auth')
 
-router.use(auth)
+router.use(auth, pharmacyOnly)
 
 // Roles zote zenye access (admin/manager/cashier) zinaweza ku-dispense na kuona
 // register - hakuna requireRole maalum hapa (mfanyakazi yeyote wa duka anaweza

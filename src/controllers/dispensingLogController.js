@@ -4,8 +4,8 @@ const Product = require('../models/product')
 const dispensingLogController = {
   async getAll(req, res) {
     try {
-      const rows = await DispensingLog.findAll({ limit: req.query.limit })
-      res.json(rows)
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+      res.json(await DispensingLog.findAll({ limit }))
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }
@@ -13,36 +13,26 @@ const dispensingLogController = {
 
   async create(req, res) {
     try {
-      const { product_id, quantity_dispensed, patient_name, prescriber_name, dosage_instructions } = req.body
-      const dispensed_by = req.user.id
-
-      if (!product_id || !quantity_dispensed || Number(quantity_dispensed) <= 0) {
+      const { product_id, quantity_dispensed, patient_name, prescriber_name, dosage_instructions, request_key } = req.body || {}
+      if (!Number.isInteger(Number(product_id)) || Number(product_id) < 1 || !Number.isFinite(Number(quantity_dispensed)) || Number(quantity_dispensed) <= 0) {
         return res.status(400).json({ message: 'Chagua bidhaa na weka quantity sahihi' })
       }
-
+      if (request_key !== undefined && (typeof request_key !== 'string' || request_key.length < 8 || request_key.length > 100)) {
+        return res.status(400).json({ message: 'Invalid dispensing request key' })
+      }
       const product = await Product.findById(product_id)
       if (!product) return res.status(404).json({ message: 'Bidhaa haikupatikana' })
-
-      if (Number(product.stock) < Number(quantity_dispensed)) {
-        return res.status(400).json({ message: `Stock haitoshi kwa ${product.name} (ipo: ${product.stock} ${product.unit || ''})` })
-      }
-
-      // batch_number inachukuliwa moja kwa moja kutoka kwa product ya SASA
-      // (single-batch-per-product model) - inahifadhiwa kama snapshot kwenye log
-      const logId = await DispensingLog.create({
-        product_id,
-        batch_number: product.batch_number,
-        quantity_dispensed: Number(quantity_dispensed),
+      const result = await DispensingLog.create({
+        product_id: Number(product_id), quantity_dispensed: Number(quantity_dispensed),
         patient_name, prescriber_name, dosage_instructions,
-        dispensed_by
+        dispensed_by: req.user.id, request_key
       })
-
       res.status(201).json({
-        message: `✓ ${quantity_dispensed} ${product.unit || ''} za ${product.name} zimetolewa`,
-        logId
+        message: result.duplicate ? 'This dispensing request was already processed' : `${quantity_dispensed} ${product.unit || ''} za ${product.name} zimetolewa`,
+        logId: result.id, duplicate: result.duplicate
       })
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message })
+      res.status(error.statusCode || 400).json({ message: error.message })
     }
   }
 }

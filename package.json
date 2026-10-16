@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "migrate:platform-hub": "node scripts/migratePlatformCustomerHub.js",
+    "migrate:pharmacy": "node scripts/migratePharmacyBatches.js"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +19,7 @@
     "express": "^4.18.0",
     "jsonwebtoken": "^9.0.0",
     "mysql2": "^3.0.0",
+    "multer": "^2.0.2",
     "react-barcode-reader": "^0.0.2"
   },
   "devDependencies": {

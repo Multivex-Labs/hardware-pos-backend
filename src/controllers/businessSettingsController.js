@@ -14,10 +14,13 @@ const businessSettingsController = {
   // ADMIN ONLY - kubadilisha taarifa zote
   async update(req, res) {
     try {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'business_type')) {
+        return res.status(400).json({ message: 'Business type is managed by Multivex Labs and cannot be changed here' })
+      }
+
       const {
         business_name, logo, address, phone, motto,
-        tin_number, bank_name, bank_account, bank_branch,
-        business_type // MPYA - 'hardware' | 'pharmacy' | 'general'
+        tin_number, bank_name, bank_account, bank_branch
       } = req.body
 
       if (!business_name) {
@@ -35,10 +38,7 @@ const businessSettingsController = {
         tin_number: tin_number !== undefined ? tin_number : current.tin_number,
         bank_name: bank_name !== undefined ? bank_name : current.bank_name,
         bank_account: bank_account !== undefined ? bank_account : current.bank_account,
-        bank_branch: bank_branch !== undefined ? bank_branch : current.bank_branch,
-        // business_type column ni NOT NULL kwenye DB - lazima tuwe na thamani
-        // kila wakati, kwa hiyo tuna-fallback mara mbili: request -> current -> 'general'
-        business_type: business_type !== undefined ? business_type : (current.business_type || 'general')
+        bank_branch: bank_branch !== undefined ? bank_branch : current.bank_branch
       })
 
       res.json({ message: 'Business settings zimebadilishwa successfully' })

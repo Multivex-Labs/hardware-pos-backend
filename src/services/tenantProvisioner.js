@@ -39,11 +39,17 @@ async function provisionTenant(opts) {
     slug,
     businessName,
     plan = 'starter',
+    billingType = 'monthly',
     businessType = 'hardware',
     adminName,
     adminEmail,
     adminPassword,
-    trialDays = 14
+    customerContactName,
+    customerEmail,
+    customerPhone,
+    trialDays = 14,
+    initialPaymentTzs,
+    initialPaymentReference
   } = opts
 
   if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(slug || '')) {
@@ -51,7 +57,19 @@ async function provisionTenant(opts) {
   }
   if (RESERVED.has(slug)) throw new Error('Slug hii imehifadhiwa')
   if (!PLANS[plan]) throw new Error(`Plan haipo: ${plan}`)
+  if (!['monthly', 'one_time'].includes(billingType)) throw new Error('Billing type is not valid')
+  if (!['hardware', 'pharmacy', 'general'].includes(businessType)) throw new Error('Business type is not valid')
   if (!businessName) throw new Error('Jina la biashara linahitajika')
+  if (billingType === 'one_time' && (!Number.isSafeInteger(initialPaymentTzs) || initialPaymentTzs < 1)) {
+    throw new Error('Enter the full amount received for the one-time package')
+  }
+  if (billingType === 'one_time' && initialPaymentReference != null &&
+      (typeof initialPaymentReference !== 'string' || initialPaymentReference.length > 120)) {
+    throw new Error('Payment reference must be 120 characters or fewer')
+  }
+  if (billingType === 'one_time' && (!customerPhone || customerPhone.trim().length < 5)) {
+    throw new Error('A valid customer contact phone number is required')
+  }
   if (!adminEmail || !adminPassword || adminPassword.length < 8) {
     throw new Error('Admin email na password (angalau herufi 8) zinahitajika')
   }
@@ -63,7 +81,8 @@ async function provisionTenant(opts) {
   if (exists.length) throw new Error('Slug tayari inatumika')
 
   const dbName = `mvx_${slug.replace(/-/g, '_')}`
-  const subscriptionEnd = new Date(Date.now() + trialDays * 86400000)
+  const subscriptionEnd = billingType === 'monthly' ? new Date(Date.now() + trialDays * 86400000) : null
+  const initialStatus = billingType === 'monthly' && trialDays > 0 ? 'trial' : 'active'
 
   const root = await connect(undefined)
   let created = false
@@ -86,6 +105,12 @@ async function provisionTenant(opts) {
       await step('role column', () =>
         tdb.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(100) NOT NULL DEFAULT 'cashier'")
       )
+      await step('password rotation column', async () => {
+        const [passwordChangeColumns] = await tdb.execute("SHOW COLUMNS FROM users LIKE 'must_change_password'")
+        if (!passwordChangeColumns.length) {
+          await tdb.query('ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER permissions')
+        }
+      })
       await step('user_roles table', () =>
         tdb.query(`CREATE TABLE IF NOT EXISTS user_roles (
           id INT NOT NULL AUTO_INCREMENT,
@@ -99,7 +124,7 @@ async function provisionTenant(opts) {
 
       const hash = await bcrypt.hash(adminPassword, 10)
       await step('insert admin user', () =>
-        tdb.execute('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)', [
+        tdb.execute('INSERT INTO users (name, email, password, role, must_change_password) VALUES (?, ?, ?, ?, 1)', [
           adminName || 'Admin',
           adminEmail,
           hash,
@@ -108,25 +133,70 @@ async function provisionTenant(opts) {
       )
       // business_settings ni table ya row moja (id = 1), kwa hiyo id inatolewa wazi
       await step('insert business_settings', () =>
-        tdb.execute('INSERT INTO business_settings (id, business_name) VALUES (1, ?)', [businessName])
+        tdb.execute('INSERT INTO business_settings (id, business_name, business_type) VALUES (1, ?, ?)', [businessName, businessType])
       )
     } finally {
       await tdb.end()
     }
 
-    const [r] = await step('register in master (tenants)', () =>
-      master.execute(
-        `INSERT INTO tenants (slug, business_name, db_name, plan, business_type, status, jwt_secret, subscription_end)
-         VALUES (?, ?, ?, ?, ?, 'trial', ?, ?)`,
-        [slug, businessName, dbName, plan, businessType, newSecret(), subscriptionEnd]
+    const masterConnection = await master.getConnection()
+    let r
+    try {
+      await masterConnection.beginTransaction()
+      const [tenantResult] = await step('register in master (tenants)', () =>
+        masterConnection.execute(
+        `INSERT INTO tenants (slug, business_name, db_name, plan, billing_type, business_type, status, jwt_secret, subscription_end)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [slug, businessName, dbName, plan, billingType, businessType, initialStatus, newSecret(), subscriptionEnd]
       )
-    )
+      )
+      r = tenantResult
+      if (customerPhone) {
+        await step('register platform customer contact', () =>
+          masterConnection.execute(
+            `INSERT INTO platform_customers
+               (tenant_id, customer_type, business_name, contact_name, email, phone, package_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              r.insertId,
+              billingType === 'one_time' ? 'one_time' : 'local',
+              businessName,
+              customerContactName || null,
+              customerEmail || adminEmail,
+              customerPhone,
+              plan
+            ]
+          )
+        )
+        if (billingType === 'one_time') {
+          const [customerRows] = await masterConnection.execute(
+            'SELECT id FROM platform_customers WHERE tenant_id = ?',
+            [r.insertId]
+          )
+          await step('record one-time package payment', () =>
+            masterConnection.execute(
+              `INSERT INTO platform_payments (customer_id, amount_tzs, reference, note)
+               VALUES (?, ?, ?, ?)`,
+              [customerRows[0].id, initialPaymentTzs, initialPaymentReference?.trim() || null, `One-time ${plan} package purchase`]
+            )
+          )
+        }
+      }
+      await masterConnection.commit()
+    } catch (err) {
+      await masterConnection.rollback()
+      throw err
+    } finally {
+      masterConnection.release()
+    }
 
     return {
       id: r.insertId,
       slug,
       dbName,
       plan,
+      billingType,
+      initialPaymentTzs: billingType === 'one_time' ? initialPaymentTzs : null,
       subscriptionEnd,
       url: `https://${slug}.${process.env.BASE_DOMAIN || 'localhost'}`
     }

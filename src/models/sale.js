@@ -9,6 +9,26 @@ const round2 = (n) => Math.round(Number(n) * 100) / 100
 const round4 = (n) => Math.round(Number(n) * 10000) / 10000
 const CASH_TYPE_METHODS = ['cash', 'mobile_money', 'bank_transfer']
 
+async function allocateBatchQuantity(conn, { product_id, quantity, sale_id, sale_item_id, user_id }) {
+  let remaining = Number(quantity)
+  const [batches] = await conn.execute(`SELECT id, batch_number, quantity_on_hand FROM inventory_batches
+    WHERE product_id=? AND status='active' AND quantity_on_hand>0 AND expiry_date IS NOT NULL AND expiry_date>=CURDATE()
+    ORDER BY expiry_date ASC, id ASC FOR UPDATE`, [product_id])
+  const eligible = batches.reduce((sum, batch) => sum + Number(batch.quantity_on_hand), 0)
+  if (eligible + EPS < remaining) throw new BusinessError(`Eligible non-expired batch stock is insufficient for product ${product_id}. Available: ${eligible}`, 400)
+  for (const batch of batches) {
+    if (remaining <= EPS) break
+    const take = Math.min(remaining, Number(batch.quantity_on_hand))
+    const after = Number(batch.quantity_on_hand) - take
+    await conn.execute('UPDATE inventory_batches SET quantity_on_hand=?, status=? WHERE id=?', [after, after <= EPS ? 'depleted' : 'active', batch.id])
+    await conn.execute(`INSERT INTO sale_batch_allocations (sale_item_id,sale_id,product_id,batch_id,quantity) VALUES (?,?,?,?,?)`,
+      [sale_item_id, sale_id, product_id, batch.id, take])
+    await conn.execute(`INSERT INTO batch_stock_movements (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+      VALUES (?,?,'sale',?,?,?,'sale',?,NULL,?)`, [batch.id, product_id, -take, batch.quantity_on_hand, after, sale_id, user_id])
+    remaining -= take
+  }
+}
+
 const Sale = {
   // Unda sale mpya (cash, credit, au deposit)
   // walkin_name: jina la mteja asiyesajiliwa - hiari
@@ -59,10 +79,21 @@ const Sale = {
    * items: tayari zimepitia prepareItems() kwenye controller (price, cost_price, unit...)
    */
   async createAtomic({ mode, client_id = null, user_id, total, discount = 0, payment_method = 'cash',
-    walkin_name = null, amount_received = null, change_given = null, items }) {
+    walkin_name = null, amount_received = null, change_given = null, items, request_key }) {
     const conn = await db.getConnection()
     try {
       await conn.beginTransaction()
+
+      const [businessRows] = await conn.execute('SELECT business_type FROM business_settings WHERE id=1')
+      const isPharmacy = businessRows[0]?.business_type === 'pharmacy'
+      if (isPharmacy && request_key) {
+        const [existing] = await conn.execute('SELECT result_id FROM pharmacy_idempotency_keys WHERE operation=? AND request_key=? FOR UPDATE', ['sale', request_key])
+        if (existing.length && existing[0].result_id) {
+          await conn.commit()
+          return { saleId: Number(existing[0].result_id), duplicate: true }
+        }
+        await conn.execute('INSERT INTO pharmacy_idempotency_keys (operation,request_key) VALUES (?,?)', ['sale', request_key])
+      }
 
       // Credit/Deposit: funga row ya client NA uhakiki ndani ya transaction (sio kabla yake)
       let clientRow = null
@@ -97,19 +128,43 @@ const Sale = {
       )
       const saleId = saleResult.insertId
 
+      const saleItemIds = new Map()
+
       for (const item of items) {
-        await conn.execute(
+        const [itemResult] = await conn.execute(
           `INSERT INTO sale_items
             (sale_id, product_id, quantity, price, price_type, cost_price, unit_id, unit_name, conversion_factor)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [saleId, item.product_id, item.quantity, item.price, item.price_type || 'retail', item.cost_price || 0,
             item.unit_id || null, item.unit_name || null, item.conversion_factor || 1]
         )
+        saleItemIds.set(item, itemResult.insertId)
+      }
+
+      if (isPharmacy && items.length) {
+        const productIds = [...new Set(items.map(item => Number(item.product_id)))].sort((a, b) => a - b)
+        const [lockedProducts] = await conn.execute(`SELECT id,name,requires_prescription,drug_category FROM products WHERE id IN (${productIds.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`, productIds)
+        const restrictedProducts = new Map(lockedProducts.map(product => [Number(product.id), product]))
+        for (const item of items) {
+          const product = restrictedProducts.get(Number(item.product_id))
+          if (product && (product.requires_prescription || ['prescription', 'controlled'].includes(product.drug_category))) {
+            throw new BusinessError(`${product.name} requires prescription dispensing and cannot be sold through the regular POS checkout`)
+          }
+        }
       }
 
       // Stock: quantity_change iko kwenye BASE UNITS (quantity × conversion_factor).
       // StockMovement.log(…, conn) inafunga row ya product (FOR UPDATE) na inakataa stock negative.
       for (const item of items) {
+        if (isPharmacy) {
+          await allocateBatchQuantity(conn, {
+            product_id: item.product_id,
+            quantity: Number(item.quantity) * Number(item.conversion_factor || 1),
+            sale_id: saleId,
+            sale_item_id: saleItemIds.get(item),
+            user_id
+          })
+        }
         try {
           await StockMovement.log({
             product_id: item.product_id,
@@ -145,10 +200,18 @@ const Sale = {
         result.remaining_deposit = dep.balance_after
       }
 
+      if (isPharmacy && request_key) {
+        await conn.execute('UPDATE pharmacy_idempotency_keys SET result_id=? WHERE operation=? AND request_key=?', [saleId, 'sale', request_key])
+      }
+
       await conn.commit()
       return result
     } catch (err) {
       await conn.rollback()
+      if (err.code === 'ER_DUP_ENTRY' && request_key) {
+        const [rows] = await db.execute('SELECT result_id FROM pharmacy_idempotency_keys WHERE operation=? AND request_key=?', ['sale', request_key])
+        if (rows[0]?.result_id) return { saleId: Number(rows[0].result_id), duplicate: true }
+      }
       throw err
     } finally {
       conn.release()
@@ -173,8 +236,17 @@ const Sale = {
       const sale = saleRows[0]
       if (!sale) throw new Error('Sale haikupatikana')
       if (sale.voided) throw new Error('Sale hii tayari ime-voidiwa awali')
+      const [existingReturns] = await conn.execute('SELECT COUNT(*) AS count FROM returns WHERE sale_id=?', [id])
+      if (Number(existingReturns[0].count) > 0) throw new BusinessError('A sale with processed returns cannot be voided; review the return record instead')
 
       const [items] = await conn.execute('SELECT * FROM sale_items WHERE sale_id = ?', [id])
+
+      const [settingsRows] = await conn.execute('SELECT business_type FROM business_settings WHERE id=1')
+      const isPharmacy = settingsRows[0]?.business_type === 'pharmacy'
+      if (isPharmacy && items.length) {
+        const productIds = [...new Set(items.map(item => Number(item.product_id)))].sort((a, b) => a - b)
+        await conn.execute(`SELECT id FROM products WHERE id IN (${productIds.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`, productIds)
+      }
 
       // StockMovement.log() inachukua nafasi ya "UPDATE products SET stock = stock + ?"
       // ya awali — stock reversal NA movement log (movement_type='void_reversal')
@@ -187,6 +259,29 @@ const Sale = {
       // vinginevyo tunarudisha kidogo sana kwa bidhaa zenye alternate units.
       for (const item of items) {
         const baseQuantity = Number(item.quantity) * Number(item.conversion_factor || 1)
+        if (isPharmacy) {
+          const [allocations] = await conn.execute('SELECT * FROM sale_batch_allocations WHERE sale_item_id=? FOR UPDATE', [item.id])
+          if (!allocations.length) {
+            const legacyBatchNumber = `LEGACY-VOID-${id}-${item.id}`
+            const [legacyBatch] = await conn.execute(`INSERT INTO inventory_batches
+              (product_id,batch_number,quantity_received,quantity_on_hand,unit_cost,status,status_reason)
+              VALUES (?,?,?, ?,?, 'quarantined','Legacy sale voided after batch tracking was enabled; verify before release')`,
+              [item.product_id, legacyBatchNumber, baseQuantity, baseQuantity, item.cost_price || 0])
+            await conn.execute(`INSERT INTO batch_stock_movements (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+              VALUES (?,?,'void_reversal',?,0,?,'void',?,?,?)`, [legacyBatch.insertId, item.product_id, baseQuantity, baseQuantity, id, 'Legacy sale batch unknown; stock quarantined for review', user_id])
+          }
+          for (const allocation of allocations) {
+            const [batchRows] = await conn.execute('SELECT * FROM inventory_batches WHERE id=? FOR UPDATE', [allocation.batch_id])
+            const batch = batchRows[0]
+            if (!batch) throw new BusinessError('Sale batch no longer exists; cannot safely restore stock')
+            const before = Number(batch.quantity_on_hand)
+            const after = before + Number(allocation.quantity)
+            const status = batch.status === 'depleted' ? 'active' : batch.status
+            await conn.execute('UPDATE inventory_batches SET quantity_on_hand=?,status=? WHERE id=?', [after, status, batch.id])
+            await conn.execute(`INSERT INTO batch_stock_movements (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+              VALUES (?,?,'void_reversal',?,?,?,'void',?,?,?)`, [batch.id, item.product_id, allocation.quantity, before, after, id, reason || null, user_id])
+          }
+        }
         await StockMovement.log({
           product_id: item.product_id,
           movement_type: 'void_reversal',
@@ -241,6 +336,11 @@ const Sale = {
     const conn = await db.getConnection()
     try {
       await conn.beginTransaction()
+
+      const [businessRows] = await conn.execute('SELECT business_type FROM business_settings WHERE id=1')
+      if (businessRows[0]?.business_type === 'pharmacy') {
+        throw new BusinessError('Pharmacy receipts cannot be edited because stock is tied to dispensed batches. Void with a reason and create a replacement sale instead.')
+      }
 
       // 1. Funga sale na hakiki hali yake
       const [saleRows] = await conn.execute('SELECT * FROM sales WHERE id = ? FOR UPDATE', [sale_id])

@@ -1,12 +1,15 @@
 const Product = require('../models/product')
 const ProductUnit = require('../models/productUnit')
+const Pharmacy = require('../models/pharmacy')
+const BusinessSettings = require('../models/businessSettings')
 const AuditLog = require('../models/auditLog')
 
 const productController = {
   async getAll(req, res) {
     try {
       const products = await Product.findAll()
-      res.json(products)
+      const settings = await BusinessSettings.get()
+      res.json(settings?.business_type === 'pharmacy' ? await Pharmacy.addEligibleStock(products) : products)
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }
@@ -24,6 +27,8 @@ const productController = {
 
   async create(req, res) {
     try {
+      const settings = await BusinessSettings.get()
+      const isPharmacy = settings?.business_type === 'pharmacy'
       const {
         name, description, price, wholesale_price, cost_price, stock, unit, low_stock_alert, category, shelf,
         expiry_date, batch_number, requires_prescription, dosage, manufacturer, drug_category
@@ -43,12 +48,14 @@ const productController = {
           requires_prescription: !!requires_prescription,
           dosage: dosage || null,
           manufacturer: manufacturer || null,
-          drug_category: drug_category || null
+          drug_category: drug_category || null,
+          isPharmacy,
+          created_by: req.user.id
         }
       )
       res.status(201).json({ message: 'Product imeundwa successfully', productId })
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message })
+      res.status(400).json({ message: error.message })
     }
   },
 
@@ -60,6 +67,11 @@ const productController = {
       } = req.body
       const product = await Product.findById(req.params.id)
       if (!product) return res.status(404).json({ message: 'Product haikupatikana' })
+      const settings = await BusinessSettings.get()
+      const isPharmacy = settings?.business_type === 'pharmacy'
+      if (isPharmacy && stock !== undefined && Number(stock) !== Number(product.stock)) {
+        return res.status(400).json({ message: 'Use batch management or Procurement to change pharmacy stock so the batch ledger stays accurate' })
+      }
 
       await Product.update(
         req.params.id,
@@ -67,15 +79,15 @@ const productController = {
         description ?? product.description,
         price ?? product.price,
         cost_price ?? product.cost_price,
-        stock ?? product.stock,
+        isPharmacy ? product.stock : (stock ?? product.stock),
         unit ?? product.unit,
         low_stock_alert ?? product.low_stock_alert,
         category ?? product.category,
         shelf !== undefined ? shelf : product.shelf,
         wholesale_price !== undefined ? wholesale_price : product.wholesale_price,
         {
-          expiry_date: expiry_date !== undefined ? expiry_date : product.expiry_date,
-          batch_number: batch_number !== undefined ? batch_number : product.batch_number,
+          expiry_date: isPharmacy ? product.expiry_date : (expiry_date !== undefined ? expiry_date : product.expiry_date),
+          batch_number: isPharmacy ? product.batch_number : (batch_number !== undefined ? batch_number : product.batch_number),
           requires_prescription: requires_prescription !== undefined ? !!requires_prescription : !!product.requires_prescription,
           dosage: dosage !== undefined ? dosage : product.dosage,
           manufacturer: manufacturer !== undefined ? manufacturer : product.manufacturer,
@@ -125,6 +137,15 @@ const productController = {
   async getExpiringSoon(req, res) {
     try {
       const days = req.query.days ? Number(req.query.days) : 30
+      const settings = await BusinessSettings.get()
+      if (settings?.business_type === 'pharmacy') {
+        const { data } = await Pharmacy.listBatches({ status: 'expiry', limit: 200 })
+        return res.json(data.filter(batch => {
+          const expiry = new Date(`${String(batch.expiry_date).slice(0, 10)}T00:00:00`)
+          const today = new Date(); today.setHours(0, 0, 0, 0)
+          return (expiry.getTime() - today.getTime()) / 86400000 <= days
+        }).map(batch => ({ ...batch, name: batch.product_name, stock: batch.quantity_on_hand })))
+      }
       const products = await Product.findExpiringSoon(days)
       res.json(products)
     } catch (error) {

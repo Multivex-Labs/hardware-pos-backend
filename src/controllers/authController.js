@@ -13,6 +13,9 @@ const authController = {
       if (!name || !email || !password) {
         return res.status(400).json({ message: 'Jaza jina, email na password' })
       }
+      if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
+        return res.status(400).json({ message: 'Password lazima iwe na herufi 8 hadi 128' })
+      }
 
       const safeRole = role || 'cashier'
       if (typeof safeRole !== 'string' || safeRole === 'admin' || !(await User.roleExists(safeRole))) {
@@ -60,7 +63,8 @@ const authController = {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: user.permissions
+          permissions: user.permissions,
+          must_change_password: Boolean(user.must_change_password)
         }
       })
     } catch (error) {
@@ -72,6 +76,53 @@ const authController = {
     try {
       const user = await User.findById(req.user.id)
       res.json(user)
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body
+      if (typeof currentPassword !== 'string' || !currentPassword) {
+        return res.status(400).json({ message: 'Weka password yako ya sasa' })
+      }
+      if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 128) {
+        return res.status(400).json({ message: 'Password mpya lazima iwe na herufi 8 hadi 128' })
+      }
+
+      const currentHash = await User.findPasswordById(req.user.id)
+      if (!currentHash || !(await bcrypt.compare(currentPassword, currentHash))) {
+        return res.status(400).json({ message: 'Password ya sasa si sahihi' })
+      }
+      if (await bcrypt.compare(newPassword, currentHash)) {
+        return res.status(400).json({ message: 'Password mpya lazima iwe tofauti na ya sasa' })
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 10)
+      await User.updatePassword(req.user.id, passwordHash)
+      res.json({ message: 'Password imebadilishwa successfully' })
+    } catch (error) {
+      res.status(500).json({ message: 'Server error', error: error.message })
+    }
+  },
+
+  async resetUserPassword(req, res) {
+    try {
+      const { id } = req.params
+      const { temporaryPassword } = req.body
+      if (Number(id) === req.user.id) {
+        return res.status(400).json({ message: 'Tumia Change password kubadilisha password yako mwenyewe' })
+      }
+      if (typeof temporaryPassword !== 'string' || temporaryPassword.length < 8 || temporaryPassword.length > 128) {
+        return res.status(400).json({ message: 'Temporary password lazima iwe na herufi 8 hadi 128' })
+      }
+      const user = await User.findById(id)
+      if (!user) return res.status(404).json({ message: 'User haikupatikana' })
+
+      const passwordHash = await bcrypt.hash(temporaryPassword, 10)
+      await User.updatePassword(id, passwordHash, true)
+      res.json({ message: 'Temporary password imewekwa. User atalazimika kuibadilisha akiingia.' })
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message })
     }

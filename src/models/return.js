@@ -1,4 +1,5 @@
 const db = require('../config/database')
+const StockMovement = require('./stockMovement')
 
 const Return = {
   // Pata ni kiasi gani tayari kimeshirikishwa kurudi kwa kila sale_item (kuzuia double-return)
@@ -23,6 +24,9 @@ const Return = {
     try {
       await conn.beginTransaction()
 
+      const [businessRows] = await conn.execute('SELECT business_type FROM business_settings WHERE id=1')
+      const isPharmacy = businessRows[0]?.business_type === 'pharmacy'
+
       const total_refund = items.reduce((sum, i) => sum + (i.price * i.quantity_returned), 0)
 
       const [result] = await conn.execute(
@@ -32,12 +36,26 @@ const Return = {
       const returnId = result.insertId
 
       for (const item of items) {
-        await conn.execute(
+        const [returnItemResult] = await conn.execute(
           'INSERT INTO return_items (return_id, sale_item_id, product_id, quantity_returned, price, subtotal, reason) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [returnId, item.sale_item_id, item.product_id, item.quantity_returned, item.price, item.price * item.quantity_returned, item.reason || null]
         )
-        // Rudisha stock ghalani
-        await conn.execute('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity_returned, item.product_id])
+        if (isPharmacy) {
+          const [saleItemRows] = await conn.execute('SELECT conversion_factor,cost_price FROM sale_items WHERE id=? FOR UPDATE', [item.sale_item_id])
+          const baseQuantity = Number(item.quantity_returned) * Number(saleItemRows[0]?.conversion_factor || 1)
+          await conn.execute('SELECT id FROM products WHERE id=? FOR UPDATE', [item.product_id])
+          const [batchResult] = await conn.execute(`INSERT INTO inventory_batches
+            (product_id,batch_number,received_date,quantity_received,quantity_on_hand,unit_cost,status,status_reason)
+            VALUES (?,?,CURDATE(),?,?,?,'quarantined','Customer return; inspect before releasing for sale or dispensing')`,
+            [item.product_id, `RETURN-${returnId}-${returnItemResult.insertId}`, baseQuantity, baseQuantity, saleItemRows[0]?.cost_price || 0])
+          await conn.execute(`INSERT INTO batch_stock_movements
+            (batch_id,product_id,movement_type,quantity_change,quantity_before,quantity_after,reference_type,reference_id,reason,performed_by)
+            VALUES (?,?,'return',?,0,?,'return',?,?,?)`, [batchResult.insertId, item.product_id, baseQuantity, baseQuantity, returnId, 'Customer return quarantined for inspection', processed_by])
+          await StockMovement.log({ product_id: item.product_id, movement_type: 'return', quantity_change: baseQuantity, reference_type: 'return', reference_id: returnId, reason: 'Customer return placed in quarantined batch', performed_by: processed_by }, conn)
+        } else {
+          // Rudisha stock ghalani kwa biashara zisizo pharmacy
+          await conn.execute('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity_returned, item.product_id])
+        }
       }
 
       // Store credit → ongeza kwenye amana ya client (deposit) badala ya kutoa cash

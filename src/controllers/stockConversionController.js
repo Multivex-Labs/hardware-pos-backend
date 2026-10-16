@@ -1,5 +1,6 @@
 const StockConversion = require('../models/stockConversion')
 const Product = require('../models/product')
+const BusinessSettings = require('../models/businessSettings')
 
 const stockConversionController = {
   async getAll(req, res) {
@@ -13,6 +14,8 @@ const stockConversionController = {
 
   async create(req, res) {
     try {
+      const settings = await BusinessSettings.get()
+      if (settings?.business_type === 'pharmacy') return res.status(400).json({ message: 'Use a batch-aware workflow for pharmacy stock conversions; this conversion is not enabled for pharmacy inventory yet' })
       const { from_product_id, from_quantity, to_product_id, to_quantity, reason } = req.body
       const performed_by = req.user.id
 
