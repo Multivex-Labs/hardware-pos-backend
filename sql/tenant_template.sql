@@ -19,6 +19,29 @@ CREATE TABLE IF NOT EXISTS `audit_logs` (
   CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS `batch_stock_movements` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `batch_id` int NOT NULL,
+  `product_id` int NOT NULL,
+  `movement_type` enum('opening','purchase','sale','dispensing','adjustment','damage','quarantine','recall','status_change','void_reversal','return','write_off') NOT NULL,
+  `quantity_change` decimal(12,3) NOT NULL,
+  `quantity_before` decimal(12,3) NOT NULL,
+  `quantity_after` decimal(12,3) NOT NULL,
+  `reference_type` varchar(50) DEFAULT NULL,
+  `reference_id` int DEFAULT NULL,
+  `reason` varchar(255) DEFAULT NULL,
+  `performed_by` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_batch_movement` (`batch_id`,`created_at`),
+  KEY `idx_batch_movement_reference` (`reference_type`,`reference_id`),
+  KEY `batch_movements_product_fk` (`product_id`),
+  KEY `batch_movements_user_fk` (`performed_by`),
+  CONSTRAINT `batch_movements_batch_fk` FOREIGN KEY (`batch_id`) REFERENCES `inventory_batches` (`id`),
+  CONSTRAINT `batch_movements_product_fk` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`),
+  CONSTRAINT `batch_movements_user_fk` FOREIGN KEY (`performed_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS `business_settings` (
   `id` int NOT NULL,
   `business_name` varchar(150) NOT NULL DEFAULT 'PIUS HARDWARE',
@@ -69,6 +92,19 @@ CREATE TABLE IF NOT EXISTS `clients` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS `dispensing_batch_allocations` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `dispensing_log_id` int NOT NULL,
+  `batch_id` int NOT NULL,
+  `quantity` decimal(12,3) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_dispensing_alloc_log` (`dispensing_log_id`),
+  KEY `idx_dispensing_alloc_batch` (`batch_id`),
+  CONSTRAINT `dispensing_alloc_batch_fk` FOREIGN KEY (`batch_id`) REFERENCES `inventory_batches` (`id`),
+  CONSTRAINT `dispensing_alloc_log_fk` FOREIGN KEY (`dispensing_log_id`) REFERENCES `dispensing_log` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS `dispensing_log` (
   `id` int NOT NULL AUTO_INCREMENT,
   `product_id` int NOT NULL,
@@ -85,6 +121,19 @@ CREATE TABLE IF NOT EXISTS `dispensing_log` (
   KEY `idx_created` (`created_at`),
   CONSTRAINT `dispensing_log_ibfk_1` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`),
   CONSTRAINT `dispensing_log_ibfk_2` FOREIGN KEY (`dispensed_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `dispensing_prescription_links` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `dispensing_log_id` int NOT NULL,
+  `prescription_item_id` bigint NOT NULL,
+  `quantity` decimal(12,3) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dispensing_prescription_item` (`dispensing_log_id`,`prescription_item_id`),
+  KEY `idx_dispensing_prescription_item` (`prescription_item_id`),
+  CONSTRAINT `dispensing_prescription_link_item_fk` FOREIGN KEY (`prescription_item_id`) REFERENCES `pharmacy_prescription_items` (`id`),
+  CONSTRAINT `dispensing_prescription_link_log_fk` FOREIGN KEY (`dispensing_log_id`) REFERENCES `dispensing_log` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS `expenses` (
@@ -136,6 +185,36 @@ CREATE TABLE IF NOT EXISTS `grn_items` (
   CONSTRAINT `grn_items_ibfk_2` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS `inventory_batches` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `product_id` int NOT NULL,
+  `batch_number` varchar(80) NOT NULL,
+  `supplier_id` int DEFAULT NULL,
+  `grn_id` int DEFAULT NULL,
+  `received_date` date DEFAULT NULL,
+  `manufacture_date` date DEFAULT NULL,
+  `expiry_date` date DEFAULT NULL,
+  `quantity_received` decimal(12,3) NOT NULL DEFAULT '0.000',
+  `quantity_on_hand` decimal(12,3) NOT NULL DEFAULT '0.000',
+  `unit_cost` decimal(12,2) NOT NULL DEFAULT '0.00',
+  `status` enum('active','quarantined','recalled','depleted') NOT NULL DEFAULT 'active',
+  `status_reason` varchar(255) DEFAULT NULL,
+  `created_by` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_batch_product_number` (`product_id`,`batch_number`),
+  KEY `idx_batch_fefo` (`product_id`,`status`,`expiry_date`,`id`),
+  KEY `idx_batch_expiry_status` (`expiry_date`,`status`),
+  KEY `idx_batch_supplier` (`supplier_id`),
+  KEY `inventory_batches_grn_fk` (`grn_id`),
+  KEY `inventory_batches_user_fk` (`created_by`),
+  CONSTRAINT `inventory_batches_grn_fk` FOREIGN KEY (`grn_id`) REFERENCES `goods_received` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `inventory_batches_product_fk` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`),
+  CONSTRAINT `inventory_batches_supplier_fk` FOREIGN KEY (`supplier_id`) REFERENCES `vendors` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `inventory_batches_user_fk` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS `payments` (
   `id` int NOT NULL AUTO_INCREMENT,
   `client_id` int NOT NULL,
@@ -148,6 +227,51 @@ CREATE TABLE IF NOT EXISTS `payments` (
   PRIMARY KEY (`id`),
   KEY `client_id` (`client_id`),
   CONSTRAINT `payments_ibfk_1` FOREIGN KEY (`client_id`) REFERENCES `clients` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `pharmacy_idempotency_keys` (
+  `operation` varchar(40) NOT NULL,
+  `request_key` varchar(100) NOT NULL,
+  `result_id` bigint DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`operation`,`request_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `pharmacy_prescription_items` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `prescription_id` bigint NOT NULL,
+  `product_id` int NOT NULL,
+  `quantity_prescribed` decimal(12,3) NOT NULL,
+  `quantity_dispensed` decimal(12,3) NOT NULL DEFAULT '0.000',
+  `dosage_instructions` varchar(255) DEFAULT NULL,
+  `frequency` varchar(100) DEFAULT NULL,
+  `route` varchar(80) DEFAULT NULL,
+  `duration` varchar(80) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_prescription_item` (`prescription_id`),
+  KEY `pharmacy_prescription_item_product_fk` (`product_id`),
+  CONSTRAINT `pharmacy_prescription_item_header_fk` FOREIGN KEY (`prescription_id`) REFERENCES `pharmacy_prescriptions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `pharmacy_prescription_item_product_fk` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `pharmacy_prescriptions` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `prescription_number` varchar(80) DEFAULT NULL,
+  `patient_name` varchar(150) DEFAULT NULL,
+  `patient_reference` varchar(80) DEFAULT NULL,
+  `patient_contact` varchar(40) DEFAULT NULL,
+  `prescriber_name` varchar(150) DEFAULT NULL,
+  `prescription_date` date DEFAULT NULL,
+  `status` enum('pending','in_progress','partially_dispensed','dispensed','cancelled') NOT NULL DEFAULT 'pending',
+  `notes` text,
+  `created_by` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pharmacy_prescription_number` (`prescription_number`),
+  KEY `idx_prescription_status_date` (`status`,`prescription_date`),
+  KEY `pharmacy_prescriptions_user_fk` (`created_by`),
+  CONSTRAINT `pharmacy_prescriptions_user_fk` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS `po_items` (
@@ -274,6 +398,25 @@ CREATE TABLE IF NOT EXISTS `returns` (
   CONSTRAINT `fk_returns_user` FOREIGN KEY (`processed_by`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS `sale_batch_allocations` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `sale_item_id` int NOT NULL,
+  `sale_id` int NOT NULL,
+  `product_id` int NOT NULL,
+  `batch_id` int NOT NULL,
+  `quantity` decimal(12,3) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sale_allocation_item` (`sale_item_id`),
+  KEY `idx_sale_allocation_batch` (`batch_id`),
+  KEY `sale_batch_alloc_sale_fk` (`sale_id`),
+  KEY `sale_batch_alloc_product_fk` (`product_id`),
+  CONSTRAINT `sale_batch_alloc_batch_fk` FOREIGN KEY (`batch_id`) REFERENCES `inventory_batches` (`id`),
+  CONSTRAINT `sale_batch_alloc_item_fk` FOREIGN KEY (`sale_item_id`) REFERENCES `sale_items` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `sale_batch_alloc_product_fk` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`),
+  CONSTRAINT `sale_batch_alloc_sale_fk` FOREIGN KEY (`sale_id`) REFERENCES `sales` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS `sale_items` (
   `id` int NOT NULL AUTO_INCREMENT,
   `sale_id` int NOT NULL,
@@ -381,6 +524,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `password` varchar(255) NOT NULL,
   `role` varchar(100) NOT NULL DEFAULT 'cashier',
   `permissions` longtext,
+  `must_change_password` tinyint(1) NOT NULL DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`)
@@ -415,6 +559,8 @@ CREATE TABLE IF NOT EXISTS `vendors` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 SET FOREIGN_KEY_CHECKS=1;
+
+-- Pharmacy batch schema from migration 008
 -- Pharmacy batch inventory: additive, rerunnable migration.
 CREATE TABLE IF NOT EXISTS inventory_batches (
   id INT NOT NULL AUTO_INCREMENT,
@@ -565,3 +711,4 @@ INSERT INTO batch_stock_movements
 SELECT b.id, b.product_id, 'opening', b.quantity_on_hand, 0, b.quantity_on_hand, 'Migrated from existing product stock'
 FROM inventory_batches b
 WHERE NOT EXISTS (SELECT 1 FROM batch_stock_movements m WHERE m.batch_id = b.id);
+

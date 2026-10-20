@@ -44,8 +44,12 @@ async function main() {
 
   const [[settings]] = await db.query('SELECT COUNT(*) AS n FROM business_settings')
   if (settings.n === 0) {
-    await db.execute('INSERT INTO business_settings (id, business_name) VALUES (1, ?)', [
-      process.env.BUSINESS_NAME || 'My Shop'
+    const type = ['general', 'hardware', 'pharmacy'].includes(process.env.BUSINESS_TYPE)
+      ? process.env.BUSINESS_TYPE
+      : 'general'
+    await db.execute('INSERT INTO business_settings (id, business_name, business_type) VALUES (1, ?, ?)', [
+      process.env.BUSINESS_NAME || 'My Shop',
+      type
     ])
     console.log('[seed] business_settings imewekwa')
   }
