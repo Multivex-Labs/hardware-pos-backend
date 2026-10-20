@@ -4,6 +4,7 @@ require('dotenv').config()
 
 const authRoutes = require('./routes/auth')
 const productRoutes = require('./routes/products')
+const productImportRoutes = require('./routes/productImport')
 const clientRoutes = require('./routes/clients')
 const saleRoutes = require('./routes/sales')
 const returnRoutes = require('./routes/returns')
@@ -39,6 +40,7 @@ if (process.env.MULTI_TENANT === 'true') {
 
 app.use('/api', permissionGate)
 app.use('/api/auth', authRoutes)
+app.use('/api/products/import', productImportRoutes) // MPYA - lazima iwe KABLA ya /api/products
 app.use('/api/products', productRoutes)
 app.use('/api/clients', clientRoutes)
 app.use('/api/sales', saleRoutes)
